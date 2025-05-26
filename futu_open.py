@@ -40,7 +40,6 @@ def load_config():
         # 映射 trd_env 字串到 TrdEnv 枚舉
         trd_env_map = {'REAL': TrdEnv.REAL, 'SIMULATE': TrdEnv.SIMULATE}
         config['trd_env'] = trd_env_map.get(config['trd_env'].upper(), TrdEnv.SIMULATE)
-        # logging.info(f"成功載入配置：host={config['host']}, port={config['port']}, trd_env={config['trd_env']}")
         return config
     except FileNotFoundError:
         logging.warning("config.json 不存在，使用預設配置")
@@ -66,7 +65,7 @@ def setup_logging():
 def save_virtual_orders_to_csv():
     """將尚未平倉的虛擬訂單保存到 virtual_orders.csv"""
     try:
-        csv_file = 'virtual_orders.csv'
+        csv_file = 'menu/virtual_orders.csv'
         if not os.access(os.path.dirname(csv_file) or '.', os.W_OK):
             logging.error("沒有寫入 virtual_orders.csv 的權限，請檢查目錄權限或以管理員身份運行")
             return
@@ -91,7 +90,7 @@ def save_virtual_orders_to_csv():
 def load_virtual_orders_from_csv():
     """從 virtual_orders.csv 載入虛擬訂單到 VIRTUAL_ORDERS"""
     try:
-        csv_file = 'virtual_orders.csv'
+        csv_file = 'menu/virtual_orders.csv'
         if not os.path.exists(csv_file):
             logging.info("virtual_orders.csv 不存在，啟動時無虛擬訂單")
             return []
@@ -124,7 +123,7 @@ def append_open_order_to_log(order_id, code, direction, qty, price):
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S,%f')[:-3]
         direction_text = '多' if direction.lower() == 'long' else '空'
         log_line = f"{timestamp} ID: {order_id} 提交訂單：合約={code}, 方向={direction_text}, 數量={qty}, 價格={price}\n"
-        with open('open_orders.log', 'a', encoding='utf-8') as f:
+        with open('menu/open_orders.log', 'a', encoding='utf-8') as f:
             f.write(log_line)
     except Exception as e:
         logging.error(f"寫入 open_orders.log 失敗，訂單ID={order_id}：{e}")
@@ -135,10 +134,10 @@ def update_order_in_log(order_id, remaining_qty):
     try:
         temp_file = 'open_orders_temp.log'
         log_updated = False
-        if not os.path.exists('open_orders.log'):
+        if not os.path.exists('menu/open_orders.log'):
             logging.warning(f"open_orders.log 不存在，無需更新訂單 {order_id}")
             return
-        with open('open_orders.log', 'r', encoding='utf-8') as f:
+        with open('menu/open_orders.log', 'r', encoding='utf-8') as f:
             lines = f.readlines()
         with open(temp_file, 'w', encoding='utf-8') as f:
             for line in lines:
@@ -157,7 +156,7 @@ def update_order_in_log(order_id, remaining_qty):
         if not os.access(os.path.dirname(temp_file) or '.', os.W_OK):
             logging.error("沒有寫入 open_orders.log 的權限，請檢查目錄權限或以管理員身份運行")
             raise PermissionError("沒有寫入 open_orders.log 的權限")
-        shutil.move(temp_file, 'open_orders.log')
+        shutil.move(temp_file, 'menu/open_orders.log')
     except Exception as e:
         logging.error(f"更新 open_orders.log 中訂單 {order_id} 失敗：{e}")
         raise
@@ -232,7 +231,6 @@ class FuturesTrading:
                 }
                 success_msg = f"開倉訂單提交成功：訂單ID={custom_order_id}"
                 logging.info(f"開倉訂單提交：訂單ID={custom_order_id}, 合約={code}, 方向={direction}, 數量={qty}, 開倉價格={price}")
-                # logging.info(success_msg)
                 return True, success_msg
             else:
                 error_msg = f"開倉訂單提交失敗：{data}"
@@ -290,7 +288,6 @@ class FuturesTrading:
                 }
                 success_msg = f"平倉訂單提交成功：訂單ID={custom_order_id}"
                 logging.info(f"平倉訂單提交：訂單ID={custom_order_id}, 合約={code}, 方向={direction}, 數量={qty}, 平倉價格={price}")
-                # logging.info(success_msg)
                 return True, 0, 0, 0, success_msg
             else:
                 error_msg = f"平倉訂單提交失敗：{data}"
@@ -318,11 +315,9 @@ class FuturesTrading:
                         price=None  # 使用市場價格
                     )
                     results.append(msg)
-                    # logging.info(msg)
 
             success = all("成功" in msg for msg in results)
             final_msg = "全部平倉訂單提交完成"
-            # final_msg = "全部平倉訂單提交完成：" + "; ".join(results)
             logging.info(final_msg)
             return success, final_msg
         except Exception as e:
@@ -331,7 +326,7 @@ class FuturesTrading:
             return False, error_msg
 
     def cancel_order(self, order_id):
-        """取消指定待成交訂單"""
+        """取消指定訂單編號的待成交訂單"""
         try:
             # 查找對應的 futu_order_id
             futu_order_id = next((fid for fid, order in PENDING_ORDERS.items() if order['id'] == order_id), None)
@@ -340,16 +335,20 @@ class FuturesTrading:
                 logging.error(error_msg)
                 return False, error_msg
 
-            # 使用 modify_order 取消訂單，移除 modify_type
+            # 嘗試取消訂單
             ret, data = self.trd_ctx.modify_order(
+                modify_order_op=ModifyOrderOp.CANCEL,
                 order_id=futu_order_id,
-                qty=0,  # 設置 qty=0 表示取消
-                price=0,  # 設置 price=0
+                qty=0,  # 取消訂單設置 qty=0
+                price=0,  # 取消訂單設置 price=0
                 trd_env=self.TRD_ENV
             )
             if ret == RET_OK:
                 success_msg = f"訂單 {order_id} 取消提交成功"
                 logging.info(success_msg)
+                # 移除監控
+                if futu_order_id in PENDING_ORDERS:
+                    del PENDING_ORDERS[futu_order_id]
                 return True, success_msg
             else:
                 error_msg = f"訂單 {order_id} 取消失敗：{data}"
@@ -359,7 +358,6 @@ class FuturesTrading:
             error_msg = f"訂單 {order_id} 取消異常：{e}"
             logging.error(error_msg)
             return False, error_msg
-
 
     def get_positions(self):
         """查詢並記錄當前虛擬訂單和待成交訂單"""
@@ -401,7 +399,6 @@ class FuturesTrading:
                 return False, "無持倉或待成交訂單"
 
             success_msg = "持倉查詢完成"
-            # logging.info(success_msg)
             return True, success_msg
         except Exception as e:
             error_msg = f"查詢持倉異常：{str(e)}"
@@ -518,7 +515,7 @@ class FuturesTrading:
         monitor_thread = threading.Thread(target=self.monitor_orders, daemon=True)
         monitor_thread.start()
 
-        logging.info("期貨交易系統已啟動，輸入命令（/open_order, /force_order, /status），輸入 'exit' 退出")
+        logging.info("期貨交易系統已啟動，輸入命令（/open_order, /force_order, /status, /close_all, /cancel_order），輸入 'exit' 退出")
         while True:
             command = input("").strip()
             if command.lower() == 'exit':
@@ -528,7 +525,6 @@ class FuturesTrading:
                 self.trd_ctx.close()
                 break
             result = self.parse_command(command)
-            # logging.info(result)
 
 if __name__ == "__main__":
     trading = FuturesTrading()
