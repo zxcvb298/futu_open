@@ -1,5 +1,5 @@
 from futu import *
-from futu.common.constant import RET_OK  # 明確匯入 RET_OK
+from futu.common.constant import RET_OK
 import logging
 from .utils import VIRTUAL_ORDERS, PENDING_ORDERS
 
@@ -41,8 +41,11 @@ class GetPositions:
                             pnl_text = f"{pnl:.2f}"
                         else:
                             pnl_text = "無法計算盈虧"
+                        stop_loss = order.get('stop_loss', '無')
+                        take_profit = order.get('take_profit', '無')
                         logging.info(f"ID: {order['id']}, 合約={order['code']}, 方向={direction_text}, "
-                                     f"數量={order['quantity']}, 價格={order['entry_price']}, 浮動盈虧={pnl_text}")
+                                     f"數量={order['quantity']}, 價格={order['entry_price']}, 止損={stop_loss}, 止盈={take_profit}, "
+                                     f"浮動盈虧={pnl_text}")
                         has_positions = True
 
             if PENDING_ORDERS:
@@ -50,8 +53,11 @@ class GetPositions:
                 for futu_order_id, order in PENDING_ORDERS.items():
                     direction_text = '多' if order['direction'] == 'long' else '空'
                     order_type_text = '開倉' if order['order_type'] == 'open' else '平倉'
+                    stop_loss = order.get('stop_loss', '無')
+                    take_profit = order.get('take_profit', '無')
                     logging.info(f"ID: {order['id']}, 合約={order['code']}, 方向={direction_text}, "
-                                 f"數量={order['qty']}, 價格={order['price']}, 類型={order_type_text}")
+                                 f"數量={order['qty']}, 價格={order['price']}, 止損={stop_loss}, 止盈={take_profit}, "
+                                 f"類型={order_type_text}")
                     has_positions = True
 
             if not has_positions:

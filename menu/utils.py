@@ -1,4 +1,3 @@
-# utils.py
 import json
 import logging
 import os
@@ -12,16 +11,20 @@ from futu import *
 # 全局變數
 PENDING_ORDERS = {}  # 待成交訂單：{futu_order_id: order_info}
 VIRTUAL_ORDERS = []  # 開倉記錄：[{order_info}]
+CLOSING_ORDERS = set()  # 正在平倉的訂單 ID
+TRAILING_THRESHOLD = 100  # 預設移動止盈閾值
+FIXED_THRESHOLD = 100  # 預設固定止盈止損閾值
 
 def load_config():
     """從 config.json 載入配置，若失敗則使用預設值"""
     default_config = {
         'host': '127.0.0.1',
         'port': 11111,
-        'trd_env': TrdEnv.SIMULATE
+        'trd_env': TrdEnv.SIMULATE,
+        'trailing_threshold': 100,
+        'fixed_threshold': 100
     }
     try:
-        # 獲取 main.py 所在的目錄作為基準
         base_dir = os.path.dirname(os.path.abspath(__file__))
         while base_dir.endswith('menu'):
             base_dir = os.path.dirname(base_dir)
@@ -33,6 +36,10 @@ def load_config():
             return default_config
         trd_env_map = {'REAL': TrdEnv.REAL, 'SIMULATE': TrdEnv.SIMULATE}
         config['trd_env'] = trd_env_map.get(config['trd_env'].upper(), TrdEnv.SIMULATE)
+        # 更新全局 TRAILING_THRESHOLD 和 FIXED_THRESHOLD
+        global TRAILING_THRESHOLD, FIXED_THRESHOLD
+        TRAILING_THRESHOLD = float(config.get('trailing_threshold', default_config['trailing_threshold']))
+        FIXED_THRESHOLD = float(config.get('fixed_threshold', default_config['fixed_threshold']))
         return config
     except FileNotFoundError:
         logging.warning("config.json 不存在，使用預設配置")
@@ -70,7 +77,7 @@ def save_virtual_orders_to_csv():
             logging.error("沒有寫入 virtual_orders.csv 的權限，請檢查目錄權限或以管理員身份運行")
             return
         with open(csv_file, 'w', newline='', encoding='utf-8') as f:
-            fieldnames = ['id', 'code', 'direction', 'quantity', 'entry_price', 'is_open']
+            fieldnames = ['id', 'code', 'direction', 'quantity', 'entry_price', 'is_open', 'stop_loss', 'take_profit', 'highest_price', 'lowest_price', 'is_closing']
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for order in VIRTUAL_ORDERS:
@@ -81,7 +88,12 @@ def save_virtual_orders_to_csv():
                         'direction': order['direction'],
                         'quantity': order['quantity'],
                         'entry_price': order['entry_price'],
-                        'is_open': order['is_open']
+                        'is_open': order['is_open'],
+                        'stop_loss': order.get('stop_loss', ''),
+                        'take_profit': order.get('take_profit', ''),
+                        'highest_price': order.get('highest_price', ''),
+                        'lowest_price': order.get('lowest_price', ''),
+                        'is_closing': order.get('is_closing', False)
                     })
         logging.info(f"成功保存 {sum(1 for o in VIRTUAL_ORDERS if o['is_open'] and o['quantity'] > 0)} 筆虛擬訂單到 virtual_orders.csv")
     except Exception as e:
@@ -108,7 +120,12 @@ def load_virtual_orders_from_csv():
                         'direction': row['direction'],
                         'quantity': int(row['quantity']),
                         'entry_price': float(row['entry_price']),
-                        'is_open': row['is_open'].lower() == 'true'
+                        'is_open': row['is_open'].lower() == 'true',
+                        'stop_loss': float(row['stop_loss']) if row.get('stop_loss') and row['stop_loss'] else None,
+                        'take_profit': float(row['take_profit']) if row.get('take_profit') and row['take_profit'] else None,
+                        'highest_price': float(row['highest_price']) if row.get('highest_price') and row['highest_price'] else None,
+                        'lowest_price': float(row['lowest_price']) if row.get('lowest_price') and row['lowest_price'] else None,
+                        'is_closing': row.get('is_closing', 'false').lower() == 'true'
                     }
                     orders.append(order)
                 except (KeyError, ValueError) as e:

@@ -1,5 +1,7 @@
 {
   "host": "127.0.0.1",
   "port": 11111,
-  "trd_env": "SIMULATE"
+  "trd_env": "SIMULATE",
+  "trailing_threshold": 50,
+  "fixed_threshold": 10
 }

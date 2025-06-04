@@ -70,7 +70,7 @@ class CloseOrder:
                     'order_type': 'close'
                 }
                 success_msg = f"平倉訂單提交成功：訂單ID={custom_order_id}"
-                logging.info(f"平倉訂單提交：訂單ID={custom_order_id}, 合約={code}, 方向={direction}, 數量={qty}, 平倉價格={price}")
+                logging.info(f"⭕ 平倉訂單提交：訂單ID={custom_order_id}, 合約={code}, 方向={direction}, 數量={qty}, 平倉價格={price}")
                 return True, 0, 0, 0, success_msg
             else:
                 error_msg = f"平倉訂單提交失敗：{data}"
