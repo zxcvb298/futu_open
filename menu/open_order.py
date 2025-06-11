@@ -45,10 +45,10 @@ class OpenOrder:
                 return False, f"無效的方向：{direction}"
         return True, None
 
-    def execute(self, code, direction, qty, price=None, stop_loss=None, take_profit=None, use_fix=False, use_trailing=False):
+    def execute(self, code, direction, qty, price=None, stop_loss=None, take_profit=None, use_fix=False, use_trailing=False, point_id=None, hit_price=None):
         """提交開倉訂單，根據模式設置止盈止損"""
         try:
-            if price == 'market':
+            if price == 'market': # 用市場價開單才成立
                 price = self.get_market_price(code)
                 if price is None:
                     error_msg = "無法獲取市場價格"
@@ -89,11 +89,13 @@ class OpenOrder:
                     'order_type': 'open',
                     'stop_loss': stop_loss,
                     'take_profit': take_profit,
-                    'use_trailing': use_trailing
+                    'use_trailing': use_trailing,
+                    'point_id': point_id,
+                    'hit_price': hit_price
                 }
                 self.order_counter += 1
                 success_msg = f"開倉訂單提交成功：訂單ID={custom_order_id}"
-                logging.info(f"⭕ 開倉訂單提交：訂單ID={custom_order_id}, 合約={code}, 方向={direction}, 數量={qty}, 開倉價格={price}, 止損={stop_loss or '無'}, 止盈={take_profit or '無'}, 移動止盈={'啟用' if use_trailing else '未啟用'}")
+                logging.info(f"⭕ 開倉訂單提交：訂單ID={custom_order_id}, 合約={code}, 方向={direction}, 數量={qty}, 開倉價格={price}, 命中點位 ({[point_id]})={hit_price}")
                 return True, success_msg
             else:
                 error_msg = f"開倉訂單提交失敗：{data}"

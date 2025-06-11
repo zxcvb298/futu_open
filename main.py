@@ -7,6 +7,7 @@ from menu.get_positions import GetPositions
 from menu.close_all_orders import CloseAllOrders
 from menu.cancel_order import CancelOrder
 from menu.monitor_stop_loss_take_profit import MonitorStopLossTakeProfit
+from menu.points.point_manager import PointManager  # 引入 PointManager
 import os
 import time
 import threading
@@ -26,6 +27,7 @@ import logging
 
 class Main:
     """主交易系統，整合各功能類"""
+
     def __init__(self):
         # 載入配置
         config = load_config()
@@ -51,6 +53,10 @@ class Main:
         self.close_all = CloseAllOrders(self.quote_ctx, self.trd_ctx, self.trd_env)
         self.cancel_order = CancelOrder(self.trd_ctx, self.trd_env)
         self.monitor_sl_tp = MonitorStopLossTakeProfit(self.quote_ctx, self.trd_ctx, self.trd_env)
+        # 初始化點位管理
+        self.point_manager = PointManager(self.quote_ctx, self.trd_ctx, self.trd_env, max_order_num + 1)
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.point_manager.load_points(os.path.join(base_dir, 'points'))
 
     def monitor_orders(self):
         """監控訂單狀態並更新持倉"""
@@ -70,6 +76,8 @@ class Main:
                         stop_loss = order_info.get('stop_loss')
                         take_profit = order_info.get('take_profit')
                         use_trailing = order_info.get('use_trailing', False)
+                        point_id = order_info.get('point_id')
+                        hit_price = order_info.get('hit_price')
 
                         if status == OrderStatus.FILLED_ALL:
                             if order_type == 'open':
@@ -82,13 +90,22 @@ class Main:
                                     'is_open': True,
                                     'stop_loss': stop_loss,
                                     'take_profit': take_profit,
-                                    'highest_price': price,  # 初始化最高價為開倉價格
-                                    'lowest_price': price,   # 初始化最低價為開倉價格
+                                    'highest_price': price,
+                                    'lowest_price': price,
                                     'use_trailing': use_trailing,
-                                    'is_closing': False  # 初始化為非平倉狀態
+                                    'is_closing': False
                                 })
-                                logging.info(f"📥 開倉訂單成功成交：訂單ID={custom_order_id}, 合約={code}, 方向={direction}, 數量={qty}, 開倉價格={price}")
+                                logging.info(f"📥 開倉訂單成功成交：訂單ID={custom_order_id}, 合約={code}, 方向={direction}, 數量={qty}, 開倉價格={price}, 命中點位 ({[point_id]})={hit_price}, "
+                                                f"止損={stop_loss or '無'}, 止盈={take_profit or '無'}, 移動止盈={'啟用' if use_trailing else '未啟用'}\n")
                                 append_open_order_to_log(custom_order_id, code, direction, qty, price)
+                                # 檢查是否為自動開倉訂單，更新點位記錄
+                                if custom_order_id.startswith("AUTO-"):
+                                    point_id = custom_order_id.split('-')[1]
+                                    for point in self.point_manager.points.values():
+                                        if point.id == point_id:
+                                            point.add_position(order_id, int(custom_order_id.split('-')[2]), price, custom_order_id)
+                                            from menu.points.point_logger import update_point_history
+                                            update_point_history(point_id, order_id, f"合約={code}, 方向={direction}, 數量={qty}, 價格={price}", is_open=True)
                             else:
                                 original_qty = qty
                                 remaining_qty = 0
@@ -96,32 +113,39 @@ class Main:
                                     if order['id'] == custom_order_id and order['direction'] == direction and order['is_open']:
                                         if order['quantity'] <= qty:
                                             order['is_open'] = False
-                                            order['is_closing'] = False  # 平倉完成，重置
+                                            order['is_closing'] = False
                                             qty -= order['quantity']
                                         else:
                                             order['quantity'] -= qty
                                             remaining_qty = order['quantity']
-                                            order['is_closing'] = False  # 部分平倉，重置
+                                            order['is_closing'] = False
                                             qty = 0
                                         break
                                 VIRTUAL_ORDERS[:] = [order for order in VIRTUAL_ORDERS if order['is_open'] and order['quantity'] > 0]
                                 entry_price = order_info.get('entry_price', 0)
-                                pnl = (entry_price - price) * original_qty * 10 if direction == 'long' else (price - entry_price) * original_qty * 10
-                                logging.info(f"📤 平倉訂單成功成交：訂單ID={custom_order_id}, 合約={code}, 方向={direction}, 數量={original_qty}, 平倉價格={price}, 盈虧={pnl}")
+                                pnl = (price - entry_price) * original_qty * 10 if direction == 'long' else (entry_price - price) * original_qty * 10
+                                logging.info(f"📤 平倉訂單成功成交：訂單ID={custom_order_id}, 合約={code}, 方向={direction}, 數量={original_qty}, 平倉價格={price}, 盈虧={pnl}\n")
                                 update_order_in_log(custom_order_id, remaining_qty)
                                 if custom_order_id in CLOSING_ORDERS:
                                     CLOSING_ORDERS.remove(custom_order_id)
+                                # 檢查是否為自動開倉訂單，更新點位記錄
+                                if custom_order_id.startswith("AUTO-"):
+                                    point_id = custom_order_id.split('-')[1]
+                                    for point in self.point_manager.points.values():
+                                        if point.id == point_id:
+                                            point.close_position(order_id, price)
+                                            from menu.points.point_logger import update_point_history
+                                            update_point_history(point_id, order_id, f"合約={code}, 方向={direction}, 數量={qty}, 價格={price}", is_open=False)
                             del PENDING_ORDERS[order_id]
                         elif status in [OrderStatus.CANCELLED_ALL, OrderStatus.FAILED]:
                             logging.info(f"訂單 {custom_order_id} 已取消或失敗")
                             del PENDING_ORDERS[order_id]
                             if custom_order_id in CLOSING_ORDERS:
                                 CLOSING_ORDERS.remove(custom_order_id)
-                                # 恢復訂單狀態並重置移動止盈相關數據
                                 for order in VIRTUAL_ORDERS:
                                     if order['id'] == custom_order_id and not order['is_open']:
                                         order['is_open'] = True
-                                        order['is_closing'] = False  # 重置
+                                        order['is_closing'] = False
                                         if order['use_trailing']:
                                             current_price = self.monitor_sl_tp.get_market_price(order['code'])
                                             if current_price:
@@ -151,8 +175,6 @@ class Main:
             try:
                 qty = int(parts[3])
                 if len(parts) == 6:
-                    # 格式：/open_order HK.MHI2505 long 1 market fix 或 /open_order HK.MHI2505 long 1 market trailing
-                    # 或 /open_order HK.MHI2505 long 1 23200 fix 或 /open_order HK.MHI2505 long 1 23200 trailing
                     price = parts[4] if parts[4].lower() not in ['fix', 'trailing'] else 'market'
                     price = float(price) if price != 'market' else price
                     mode = parts[5].lower() if len(parts) > 5 else None
@@ -164,13 +186,11 @@ class Main:
                         return error_msg
                     success, msg = self.open_order.execute(code, direction, qty, price, use_fix=use_fix, use_trailing=use_trailing)
                 elif len(parts) == 7:
-                    # 格式：/open_order HK.MHI2505 long 1 23280 23270 23290
                     price = float(parts[4])
                     stop_loss = float(parts[5])
                     take_profit = float(parts[6])
                     success, msg = self.open_order.execute(code, direction, qty, price, stop_loss=stop_loss, take_profit=take_profit)
                 else:
-                    # 格式：/open_order HK.MHI2505 long 1 23280 或 /open_order HK.MHI2505 long 1 market
                     price = parts[4] if len(parts) > 4 else 'market'
                     price = float(price) if price != 'market' else price
                     success, msg = self.open_order.execute(code, direction, qty, price)
@@ -212,12 +232,16 @@ class Main:
         monitor_thread.start()
         sl_tp_thread = threading.Thread(target=self.monitor_sl_tp.monitor, daemon=True)
         sl_tp_thread.start()
+        # 啟動點位監控
+        point_thread = threading.Thread(target=self.point_manager.start_monitor, daemon=True)
+        point_thread.start()
 
         logging.info("期貨交易系統已啟動，輸入命令（/open_order, /force_order, /status, /close_all, /cancel_order），輸入 'exit' 退出")
         while True:
             command = input("").strip()
             if command.lower() == 'exit':
                 logging.info("退出系統")
+                self.point_manager.running = False  # 停止點位監控
                 save_virtual_orders_to_csv()
                 self.quote_ctx.close()
                 self.trd_ctx.close()
